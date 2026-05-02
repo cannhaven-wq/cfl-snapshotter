@@ -1,0 +1,16 @@
+{
+  "name": "cfl-snapshotter",
+  "version": "1.0.0",
+  "description": "Cannon Fight Lab predictions snapshotter — runs before each UFC event to lock in model verdicts",
+  "main": "snapshotter.js",
+  "scripts": {
+    "start": "node snapshotter.js",
+    "verbose": "node snapshotter.js --verbose"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -9,9 +9,9 @@
     "test": "node test/exit-contract.test.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "~2.117.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

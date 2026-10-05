@@ -19,6 +19,23 @@
 // those two apart is exactly what cost a summer of missing batches.
 console.log(`[snapshotter] process start — node ${process.version}, pid ${process.pid}, ${new Date().toISOString()}`);
 
+// @supabase/supabase-js builds a RealtimeClient inside createClient() even when
+// nothing subscribes to anything, and that constructor needs a native
+// WebSocket — which Node only has from 22. On Node 20 the failure is a
+// websocket-factory stack trace pointing at our createClient line, which reads
+// like our bug rather than a runtime-version mismatch. Say what it actually is,
+// before the require, so the next person reads one line instead of a trace.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+const NODE_MIN = 22;
+if (NODE_MAJOR < NODE_MIN) {
+  console.error(
+    `[snapshotter] FATAL: needs Node ${NODE_MIN}+, got ${process.version}. ` +
+    `@supabase/supabase-js requires a native WebSocket. ` +
+    `Fix the builder's Node version (package.json "engines.node" and .node-version), not this file.`
+  );
+  process.exit(1);
+}
+
 const { createClient } = require('@supabase/supabase-js');
 const cflEdges = require('./edges');
 

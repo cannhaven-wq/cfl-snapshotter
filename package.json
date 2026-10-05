@@ -5,12 +5,13 @@
   "main": "snapshotter.js",
   "scripts": {
     "start": "node snapshotter.js",
-    "verbose": "node snapshotter.js --verbose"
+    "verbose": "node snapshotter.js --verbose",
+    "test": "node test/exit-contract.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

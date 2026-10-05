@@ -13,6 +13,12 @@
 // Run with debug:  node snapshotter.js --verbose
 // =============================================================================
 
+// The very first thing this process does, before any require() that could
+// throw, is say that it started. A run that produces NO output at all is
+// otherwise indistinguishable from a run that never happened — and telling
+// those two apart is exactly what cost a summer of missing batches.
+console.log(`[snapshotter] process start — node ${process.version}, pid ${process.pid}, ${new Date().toISOString()}`);
+
 const { createClient } = require('@supabase/supabase-js');
 const cflEdges = require('./edges');
 
@@ -23,11 +29,23 @@ const debug = (...args) => { if (VERBOSE) console.log('[snapshotter:debug]', ...
 // ---- env ----
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY;
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SECRET_KEY env vars');
+// Name the one that is missing. "Missing SUPABASE_URL or SUPABASE_SECRET_KEY"
+// sends you to check both, and on Railway the two are set in different places.
+const missing = [
+  !SUPABASE_URL && 'SUPABASE_URL',
+  !SUPABASE_KEY && 'SUPABASE_SECRET_KEY',
+].filter(Boolean);
+if (missing.length) {
+  console.error(`[snapshotter] FATAL: missing env var(s): ${missing.join(', ')}`);
   process.exit(1);
 }
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// persistSession/autoRefreshToken OFF is not a style choice — see the exit
+// note at the bottom of this file. The auth refresh timer keeps the Node event
+// loop alive, and a cron service that does not exit blocks every later run.
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 // ---- main ----
 async function main() {
@@ -173,8 +191,51 @@ async function main() {
   log(`✓ wrote ${rows.length} predictions for ${event.name}`);
 }
 
-main().catch(err => {
-  console.error('[snapshotter] FATAL:', err.message);
-  console.error(err.stack);
+// =============================================================================
+// EXITING IS PART OF THE JOB, NOT AN AFTERTHOUGHT
+// =============================================================================
+// Railway's cron contract, verbatim from its docs:
+//
+//   "if a previous execution is still running when the next scheduled
+//    execution is due, Railway will skip the new cron job"
+//
+// So a run that finishes its work but never exits does not fail loudly — it
+// silently eats EVERY FUTURE RUN. That is the worst available failure mode for
+// this service and it is the one it was closest to having: nothing here called
+// process.exit() on the success path, and it relied on the event loop draining
+// on its own. supabase-js holds keep-alive sockets and (by default) an auth
+// refresh timer, either of which can keep Node alive indefinitely.
+//
+// Two belts:
+//   1. autoRefreshToken/persistSession are off at createClient (see above).
+//   2. The success path exits explicitly, after flushing stdout.
+//
+// And a brace: a hard watchdog, so a hung query can never become a hung
+// container that blocks next week's run too. The watchdog is unref'd so it
+// cannot itself be the thing keeping the process alive.
+const WATCHDOG_MS = Number(process.env.SNAPSHOTTER_TIMEOUT_MS || 5 * 60 * 1000);
+const watchdog = setTimeout(() => {
+  console.error(`[snapshotter] FATAL: still running after ${WATCHDOG_MS}ms — ` +
+    'exiting so the next scheduled run is not skipped.');
   process.exit(1);
-});
+}, WATCHDOG_MS);
+watchdog.unref();
+
+function finish(code) {
+  clearTimeout(watchdog);
+  // Give stdout a tick to flush before the hard exit; process.exit() can
+  // truncate a pending write to a pipe, which on Railway is the log stream.
+  if (process.stdout.writableLength === 0) process.exit(code);
+  else process.stdout.write('', () => process.exit(code));
+}
+
+main()
+  .then(() => {
+    log('done — exiting cleanly so the next scheduled run is not skipped.');
+    finish(0);
+  })
+  .catch(err => {
+    console.error('[snapshotter] FATAL:', err.message);
+    console.error(err.stack);
+    finish(1);
+  });
